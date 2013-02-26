@@ -36,20 +36,8 @@ usage of this module might look like this:
 import cgi
 import hashlib
 import time
-import urllib
 
-# Find a JSON parser
-try:
-    import json
-    _parse_json = lambda s: json.loads(s)
-except ImportError:
-    try:
-        import simplejson
-        _parse_json = lambda s: simplejson.loads(s)
-    except ImportError:
-        # For Google AppEngine
-        from django.utils import simplejson
-        _parse_json = lambda s: simplejson.loads(s)
+import requests
 
 
 class GraphAPI(object):
@@ -80,8 +68,9 @@ class GraphAPI(object):
     get_user_from_cookie() method below to get the OAuth access token
     for the active user from the cookie saved by the SDK.
     """
-    def __init__(self, access_token=None):
+    def __init__(self, access_token=None, timeout=5.0):
         self.access_token = access_token
+        self.timeout = timeout
 
     def get_object(self, id, **args):
         """Fetchs the given object from the graph."""
@@ -123,7 +112,7 @@ class GraphAPI(object):
         extended permissions.
         """
         assert self.access_token, "Write operations require an access token"
-        return self.request(parent_object + "/" + connection_name, post_args=data)
+        return self.request(parent_object + "/" + connection_name, data, "POST")
 
     def put_wall_post(self, message, attachment={}, profile_id="me"):
         """Writes a wall post to the given profile's wall.
@@ -153,31 +142,30 @@ class GraphAPI(object):
 
     def delete_object(self, id):
         """Deletes the object with the given ID from the graph."""
-        self.request(id, post_args={"method": "delete"})
+        self.request(id, {"method": "delete"}, "POST")
 
-    def request(self, path, args=None, post_args=None):
-        """Fetches the given path in the Graph API.
+    def request(self, path, args=None, method='GET'):
+        """Fetches the given path in the Graph API."""
 
-        We translate args to a valid query string. If post_args is given,
-        we send a POST request to the given path with the given arguments.
-        """
-        if not args: args = {}
+        args = args or {}
         if self.access_token:
-            if post_args is not None:
-                post_args["access_token"] = self.access_token
-            else:
-                args["access_token"] = self.access_token
-        post_data = None if post_args is None else urllib.urlencode(post_args)
-        file = urllib.urlopen("https://graph.facebook.com/" + path + "?" +
-                              urllib.urlencode(args), post_data)
-        try:
-            response = _parse_json(file.read())
-        finally:
-            file.close()
-        if response.get("error"):
-            raise GraphAPIError(response["error"]["type"],
-                                response["error"]["message"])
-        return response
+            args['access_token'] = self.access_token
+
+        kwargs = {'timeout': self.timeout}
+        if method == 'GET':
+            kwargs['params'] = args
+        else:
+            kwargs['data'] = args
+
+        response = requests.request(method, "https://graph.facebook.com/{0}".format(path), **kwargs)
+
+        response_data = response.json()
+
+        if response_data.get('error', ''):
+            raise GraphAPIError(response_data['error']['type'],
+                                response_data['error']['message'])
+
+        return response_data
 
 
 class GraphAPIError(Exception):
